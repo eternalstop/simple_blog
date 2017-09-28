@@ -1,0 +1,110 @@
+import markdown
+from django.shortcuts import render
+
+# Create your views here.
+# from django.http import HttpResponse
+from django.shortcuts import render, get_object_or_404
+from .models import Post, Category
+from comments.models import Comments
+from comments.forms import CommentsForms
+from django.views.generic import ListView, DetailView
+from django.core.paginator import Paginator
+
+
+#def index(request):
+    # return HttpResponse("这是我的博客第一步，也是我记录爱你的开始！")
+#    post_list = Post.objects.all().order_by('-create_time')
+#    return render(request, 'blog/index.html', context={'post_list': post_list})
+
+
+class IndexView(ListView):
+    model = Post
+    template_name = 'blog/index.html'
+    context_object_name = 'post_list'
+    paginate_by = 3
+
+
+def detail(request, pk):
+    post = get_object_or_404(Post, pk=pk)
+
+    post.increase_views()
+
+    post.body = markdown.markdown(post.body, 
+                                  extensions=[
+                                      'markdown.extensions.extra',
+                                      'markdown.extensions.codehilite',
+                                      'markdown.extensions.toc',
+                                  ])
+
+    form = CommentsForms()
+    # 获取当前文章的全部评论
+    comment_list = post.comments_set.all()
+    # 将文章、表单、以及全部评论作为模板变量交给detail模板，以便渲染相应数据
+    context = {'post': post, 
+               'form': form, 
+               'comment_list': comment_list,
+              }
+    return render(request, 'blog/detail.html', context=context)
+
+class PostDetailView(DetailView):
+    model = Post
+    template_name = 'blog/detail.html'
+    context_object_name = 'post_list'
+
+    def get(self, request, *args, **kwargs):
+        # 覆写get方法的目的是因为每当文章被访问一次，就将文章的阅读数量加一
+        # get方法返回的是一个HttpResponse实例
+        # 之所以要先调用父类的get方法，是因为只有在调用了父类的get方法之后才有self.object属性，其值为Post模型实例，即被访问的文章post
+        response = super(PostDetailView, self).get(request, *args, **kwargs)
+
+        # 将阅读量加一，self.object的值就是被访问的文章post
+        self.object.increase_views()
+        # 必须返回一个HttpResponse实例
+        return response
+
+    def get_object(self, queryset=None):
+        # 覆写get_object方法是因为要渲染body值
+        post = super(DetailView, self).get_object(queryset=None)
+        post.body = markdown.markdown(post.body, 
+                                      extensions=['markdown.extension.extra', 
+                                                  'markdown.extension.codehilite', 
+                                                  'markdown.extension.toc', 
+                                      ])
+        return post
+
+    def get_context_data(self, **kwargs):
+        # 覆写get_context_data方法的目的是因为不仅要把post传递给模板，还要将评论表单、文章下面的评论列表传给模板
+        context = super(DetailView, self).get_context_data(**kwargs)
+        form = CommentsForms()
+        comment_list = self.object.comment_set.all()
+        context.update({
+                       'form':form, 
+                       'comment_list':comment_list
+                      })
+        return context
+
+
+def archives(request, year, month):
+    post_list = Post.objects.filter(create_time__year=year, 
+                                    create_time__month=month
+                                   ).order_by('-create_time')
+    return render(request, 'blog/index.html', context={'post_list': post_list})
+
+
+class ArchiveView(IndexView):
+    def get_queryset(self):
+        year = self.kwargs.get('year')
+        month = self.kwargs.get('month')
+        return super(ArchiveView, self).get_queryset().filter(create_time__year=year,
+                                                              create_time__month=month
+                                                             )
+
+def category(request, pk):
+    cate = get_object_or_404(Category, pk=pk)
+    post_list = Post.objects.filter(category=cate).order_by('-create_time')
+    return render(request, 'blog/index.html', context={'post_list': post_list})
+
+class CategoryView(IndexView):
+    def get_queryset(self):
+        cate = get_object_or_404(Category, pk=self.kwargs.get('pk'))
+        return super(CategoryView, self).get_queryset().filter(category=cate)
